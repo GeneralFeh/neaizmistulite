@@ -9,6 +9,7 @@ from telegram.ext import (
 )
 from datetime import datetime, timedelta, time as dt_time
 import json
+import os
 
 TOKEN = os.environ["TOKEN"]
 DATA_FILE = "data.json"
