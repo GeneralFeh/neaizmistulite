@@ -113,16 +113,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Выбери день из списка")
 
     elif text == "Тест уведомления":
-        context.job_queue.run_once(send_today_reminder, when=1)
-        await update.message.reply_text("Тестовое уведомление будет отправлено через несколько секунд.")
+        chat_id = update.message.chat_id
+        context.job_queue.run_once(send_today_reminder, when=3, data={"chat_id": chat_id})
+        await update.message.reply_text("Тестовое уведомление будет отправлено через 3 секунды.")
 
 # ---------------- Inline кнопка "Выпила!" ----------------
 async def send_today_reminder(context: ContextTypes.DEFAULT_TYPE):
-    chat_id = list(context.bot_data.keys())[0] if context.bot_data else None
-    if chat_id:
-        keyboard = [[InlineKeyboardButton("Выпила!", callback_data="done")]]
-        markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id, "💊 Напоминание: выпей таблетку сегодня!", reply_markup=markup)
+    chat_id = context.job.data["chat_id"]
+    keyboard = [[InlineKeyboardButton("Выпила!", callback_data="done")]]
+    markup = InlineKeyboardMarkup(keyboard)
+    await context.bot.send_message(chat_id, "💊 Напоминание: выпей таблетку сегодня!", reply_markup=markup)
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -142,6 +142,7 @@ async def weekly_report(context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------- Запуск ----------------
 def main():
+    import os
     TOKEN = os.environ["TOKEN"]
     app = ApplicationBuilder().token(TOKEN).build()
 
