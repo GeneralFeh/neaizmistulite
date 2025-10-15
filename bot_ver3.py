@@ -115,11 +115,14 @@ async def save_new_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # удаляем старую задачу
         for job in job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
             job.schedule_removal()
-        now = datetime.now()
-        run_datetime = datetime.combine(now.date(), new_time)
-        if run_datetime < now:
-            run_datetime += timedelta(days=1)
-        job_queue.run_once(daily_reminder, run_datetime, name=f"reminder_{chat_id}", chat_id=chat_id)
+
+        # добавляем новую ежедневную задачу
+        job_queue.run_daily(
+            daily_reminder,
+            time=new_time,
+            name=f"reminder_{chat_id}",
+            chat_id=chat_id
+        )
 
     except ValueError:
         await update.message.reply_text("⚠ Неверный формат. Введи время в формате ЧЧ:ММ.", reply_markup=ReplyKeyboardMarkup([["🔙 Назад"]], resize_keyboard=True))
@@ -162,7 +165,10 @@ async def go_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- ежедневное уведомление ---
 async def daily_reminder(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
-    await context.bot.send_message(job.chat_id, "💊 Выпей таблетку!", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("💊 Выпила!")]], resize_keyboard=True))
+    chat_id = getattr(job, 'chat_id', None)
+    if chat_id is None:
+        return
+    await context.bot.send_message(chat_id, "💊 Выпей таблетку!", reply_markup=ReplyKeyboardMarkup([[KeyboardButton("💊 Выпила!")]], resize_keyboard=True))
 
 # --- тестовое уведомление ---
 async def test_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,18 +200,71 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("💊 Выпила!"), mark_done))
     app.add_handler(MessageHandler(filters.Regex("📊 Статистика"), show_stats))
-    app.add_handler(MessageHandler(filters.Regex("⚙ Настройки"), lambda u,c: u.message.reply_text("⚙ Настройки:", reply_markup=settings_menu())))
+    app.add_handler(MessageHandler(filters.Regex("⚙ Настройки"), lambda u, c: u.message.reply_text("⚙ Настройки:", reply_markup=settings_menu())))
     app.add_handler(MessageHandler(filters.Regex("⏱ Тестовое уведомление"), test_reminder))
     app.add_handler(conv_handler)
 
-    # --- ежедневное уведомление на текущее время ---
-    settings = load_settings()
-    hour, minute = settings["hour"], settings["minute"]
-    now = datetime.now()
-    run_time = datetime.combine(now.date(), dt_time(hour, minute))
-    if run_time < now:
-        run_time += timedelta(days=1)
-    app.job_queue.run_daily(daily_reminder, dt_time(hour, minute))
+    # --- получаем ID пользователя для запуска уведомлений ---
+    # Здесь просто запускаем ежедневное напоминаение на 7:30 пользователю,
+    # который написал /start (инициализация)
+    # Для удобства, можно задать chat_id вручную или получить с первого взаимодействия
+
+    # Для первого запуска можно использовать заглушку,
+    # и поменять после получения chat_id пользователя. Пока оставим None и запустим с задержкой.
+
+    # Запускаем polling асинхронно и потом добавим работу с задачами
+    async def on_startup(app):
+        settings = load_settings()
+        hour, minute = settings["hour"], settings["minute"]
+
+        # Для одного пользователя:
+        # Нужно проверить, что у вас где-то сохранён chat_id.
+        # Предположим, что chat_id хранится в файле settings.json как "chat_id"
+        chat_id = settings.get("chat_id")
+        if chat_id is None:
+            print("⚠ Не найден chat_id в настройках, уведомления не запущены")
+            return
+
+        # Очистим старые задачи на этого пользователя
+        for job in app.job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
+            job.schedule_removal()
+
+        app.job_queue.run_daily(
+            daily_reminder,
+            time=dt_time(hour=hour, minute=minute),
+            name=f"reminder_{chat_id}",
+            chat_id=chat_id
+        )
+
+    app.post_init = on_startup
+
+    # --- дополнительно, обработчик /start для сохранения chat_id ---
+    async def start_and_save_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        settings = load_settings()
+        if settings.get("chat_id") != chat_id:
+            settings["chat_id"] = chat_id
+            save_settings(settings)
+            # После сохранения chat_id, создаём задачу если нужно
+            hour, minute = settings["hour"], settings["minute"]
+            for job in context.job_queue.get_jobs_by_name(f"reminder_{chat_id}"):
+                job.schedule_removal()
+            context.job_queue.run_daily(
+                daily_reminder,
+                time=dt_time(hour=hour, minute=minute),
+                name=f"reminder_{chat_id}",
+                chat_id=chat_id
+            )
+        await start(update, context)
+
+    # Перерегистрируем handler start, чтобы сохранять chat_id
+    app.handlers.clear()
+    app.add_handler(CommandHandler("start", start_and_save_chat_id))
+    app.add_handler(MessageHandler(filters.Regex("💊 Выпила!"), mark_done))
+    app.add_handler(MessageHandler(filters.Regex("📊 Статистика"), show_stats))
+    app.add_handler(MessageHandler(filters.Regex("⚙ Настройки"), lambda u, c: u.message.reply_text("⚙ Настройки:", reply_markup=settings_menu())))
+    app.add_handler(MessageHandler(filters.Regex("⏱ Тестовое уведомление"), test_reminder))
+    app.add_handler(conv_handler)
 
     app.run_polling()
 
