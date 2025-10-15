@@ -19,17 +19,30 @@ def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
     with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 def load_settings():
+    default = {"hour": 7, "minute": 30, "report_day": 0}
     if not os.path.exists(SETTINGS_FILE):
-        return {"hour": 7, "minute": 30, "report_day": 0}
+        save_settings(default)
+        return default
     with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError:
+            data = {}
+    # Дополняем недостающие ключи значениями по умолчанию
+    for key, value in default.items():
+        data.setdefault(key, value)
+    save_settings(data)
+    return data
 
 def save_settings(settings):
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -48,9 +61,14 @@ async def record_pill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
     data = load_data()
     today = datetime.now().strftime("%Y-%m-%d")
-    data.setdefault(user, []).append(today)
-    save_data(data)
-    await update.message.reply_text("✅ Зафиксировано!")
+    if user not in data:
+        data[user] = []
+    if today in data[user]:
+        await update.message.reply_text("⚠ Уже зафиксировано сегодня!")
+    else:
+        data[user].append(today)
+        save_data(data)
+        await update.message.reply_text("✅ Зафиксировано!")
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = str(update.effective_user.id)
